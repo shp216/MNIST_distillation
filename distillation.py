@@ -1,44 +1,58 @@
 import torch
+import torch.nn as nn
 from torchvision.utils import save_image, make_grid
 
 from tqdm import tqdm
 from script import ContextUnet, DDPM
 import argparse, sys, os
+import time
+from PIL import Image
+import numpy as np
+from trainer import distillation_DDPM_trainer
+from dataset import MNISTDataset
+from torch.utils.data import Dataset, DataLoader
+from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights
+import warnings
+
+# 특정 경고 메시지를 무시
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def get_parser():
     parser = argparse.ArgumentParser()
     
     parser.add_argument("--pre_caching", action='store_true', help='only precaching')
+    parser.add_argument("--inversion_loss", action='store_true', help='using inversion_loss')
+    parser.add_argument("--distill_features", action='store_true', help='perform knowledge distillation using intermediate features')
+
+
     
-    parser.add_argument("--batch_size", type=int, default=64, help='batch size')
-    
-    
+    parser.add_argument("--batch_size", type=int, default=256, help='batch size')
+    parser.add_argument("--num_per_class", type=int, default=30, help='number of classes in MNIST')
+
+    parser.add_argument("--n_classes", type=int, default=10, help='number of classes in MNIST')
+    parser.add_argument("--n_sample", type=int, default=60000, help='number of total samples in MNIST')
+    parser.add_argument("--cache_n", type=int, default=60000, help='number of cache data')
+    parser.add_argument("--num_save_image", type=int, default=50, help='number of total save images in save_step')
+
+
+    parser.add_argument("--save_step", type=int, default=50, help='number of cache data')
+    parser.add_argument("--sample_step", type=int, default=5, help='number of cache data')
+
     parser.add_argument("--logdir", type=str, default='./logs/', help='log directory')
     parser.add_argument("--save_dir", type=str, default='./images/', help='save directory')
+    parser.add_argument("--eval_dir", type=str, default='./save_images/', help='eval image directory')
+    parser.add_argument("--cache_dir", type=str, default='./cache/', help='cache directory')
+
+
+    parser.add_argument("--ws_test", type=float, nargs='+', default=[0.0, 0.5, 2.0], help='List of values for ws_test')
     
+    parser.add_argument("--n_epoch", type=int, default=20, help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for training")
+    parser.add_argument("--feature_loss_weight", type=float, default=0.1, help="feature loss weighting")
+    parser.add_argument("--inversion_loss_weight", type=float, default=0.1, help="inversion loss weighting")
+
+
     return parser
-
-def load_teacher_model(model_path, device="cuda:0"):
-    # Define the model architecture that matches the saved model
-    n_classes = 10
-    n_feat = 128  # or whatever value you used during training
-    n_T = 400     # or whatever value you used during training
-
-    # Initialize the same model structure
-    teacher_model = DDPM(
-        nn_model=ContextUnet(in_channels=1, n_feat=n_feat, n_classes=n_classes), 
-        betas=(1e-4, 0.02), 
-        n_T=n_T, 
-        device=device, 
-        drop_prob=0.1
-    ).to(device)
-
-    # Load the saved state dictionary into the model
-    teacher_model.load_state_dict(torch.load(model_path, map_location=device))
-    teacher_model.eval()  # Set the model to evaluation mode
-    print(f"Model loaded from {model_path}")
-    
-    return teacher_model
 
 def precaching(args):
     device = torch.device('cuda:0')
@@ -51,7 +65,7 @@ def precaching(args):
     
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir, exist_ok=True)
-        print(f"Created directory: {args.savedir}")
+        print(f"Created directory: {args.save_dir}")
 
     T_model.eval()
     with torch.no_grad():
@@ -70,19 +84,150 @@ def precaching(args):
     # cache update
     
   
-def distillation(args):
+def precaching_x0(args):
     device = torch.device('cuda:0')
     model_path = "./model_39.pth"  # Replace with your actual model path
     T_model = load_teacher_model(model_path)
     
     # S_model
-    
+    S_model = load_student_model()
     # optimizer
     
+    if not os.path.exists(args.eval_dir):
+        os.makedirs(args.save_dir, exist_ok=True)
+        print(f"Created directory: {args.eval_dir}")
+        
+    with torch.no_grad():
+        n_sample = args.n_sample  # 각 w마다 생성할 이미지 수 (예: 20000)
+        total_samples = n_sample * len(args.ws_test)  # 전체 생성할 이미지 수 (예: 60000)
+        
+        save_dir = f"./{args.cache_dir}"  # 이미지와 레이블을 저장할 경로
+        os.makedirs(save_dir, exist_ok=True)
+
+        # 전체 이미지를 저장할 수 있도록 텐서 크기를 조정
+        img_cache = torch.zeros((total_samples, 1, 28, 28), dtype=torch.float32, device=device)  # MNIST 이미지 크기
+        class_cache = torch.zeros(total_samples, dtype=torch.long, device=device)  # 클래스 레이블
+
+        # 전체 이미지를 생성하는 루프
+        total_generated = 0
+        for w_i, w in enumerate(args.ws_test):
+            # exclude_sample에서 이미지와 해당 레이블을 반환받음
+            x_gen, labels = T_model.exclude_sample(n_sample, (1, 28, 28), device, guide_w=w)
+            
+            x_gen = (x_gen * -1 + 1)  # 이미지 범위를 [0, 1]로 변환
+            x_gen_tensor = torch.tensor(x_gen) if not isinstance(x_gen, torch.Tensor) else x_gen
+
+            # 생성된 이미지를 img_cache에 저장
+            img_cache[total_generated:total_generated + x_gen_tensor.size(0)] = x_gen_tensor
+            # 반환된 레이블을 class_cache에 저장
+            class_cache[total_generated:total_generated + x_gen_tensor.size(0)] = labels
+            
+            total_generated += x_gen_tensor.size(0)
+
+        # img_cache와 class_cache를 .pt 파일로 저장
+        torch.save(img_cache, os.path.join(save_dir, f"mnist_images_x0.pt"))
+        torch.save(class_cache, os.path.join(save_dir, f"mnist_labels_x0.pt"))
+
+        print(f"Saved MNIST images and labels to {save_dir}")
+        
+        # 각 클래스별로 10개씩 이미지를 저장
+        unseen_classes = [3]
+        seen_classes = [cls for cls in range(args.n_classes) if cls not in unseen_classes]
+        for cls in seen_classes:
+            # 해당 클래스에 해당하는 이미지를 필터링
+            class_indices = (class_cache == cls).nonzero(as_tuple=True)[0]
+            
+            # 해당 클래스에서 최대 10개까지 선택
+            selected_indices = class_indices[:10]
+            
+            if len(selected_indices) == 0:
+                print(f"No samples found for class {cls}. Skipping this class.")
+                continue  # 이 클래스를 건너뜀
+            
+            if len(selected_indices) < 10:
+                print(f"Class {cls} has fewer than 10 samples. Showing {len(selected_indices)} samples instead.")
+            
+            # 선택된 이미지를 추출
+            selected_images = img_cache[selected_indices]
+
+            # 이미지 그리드 생성 및 저장
+            grid_T = make_grid(selected_images, nrow=5)  # 10개를 5개의 열로 배치
+            save_image(grid_T, os.path.join(save_dir, f"class_{cls}_grid.png"))
+        
+def distillation_x0(args):
+    device = torch.device('cuda:0')
+    model_path = "./model_39.pth"  # Replace with your actual model path
+    T_model = load_teacher_model(model_path)
+    
+    # S_model
+    S_model = load_student_model()
+    load_pretrained_weights(S_model, model_path)
+    # optimizer
+    optim = torch.optim.Adam(S_model.parameters(), lr=args.lr)
     # cache dataset
     
-    # traning loop
+    # Dataset, DataLoader 설정
+    img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
+    label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
+    img_cache = torch.load(img_cache_path)
+    class_cache = torch.load(label_cache_path)
     
+    cache_dataset = MNISTDataset(img_cache, class_cache)
+    dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
+
+    
+    # trainer 설정
+    trainer = distillation_DDPM_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
+
+    
+    # training Loop
+    for ep in range(args.n_epoch):
+        print(f'epoch {ep}')
+        S_model.train()
+
+        # # linear lrate decay
+        # optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+
+        pbar = tqdm(dataloader)
+        loss_ema = None
+        for x, c in pbar:
+            optim.zero_grad()
+            x = x.to(device)
+            c = c.to(device)
+            
+            output_loss, total_loss = trainer(x,c, args.feature_loss_weight, args.inversion_loss_weight)
+            total_loss.backward()
+            pbar.set_description(f"loss: {total_loss:.4f}")
+            optim.step()
+    
+        if ep % args.save_step == 0:
+            save_checkpoint(S_model, optim, ep, args.logdir)      
+            
+        if ep % args.sample_step == 0:
+            S_model.eval()
+            sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
+            
+
+    # print("img_cache shape:", img_cache.shape)
+    # print("class_cache shape:", class_cache.shape)
+    
+    # # 100개의 이미지를 가져옵니다
+    # example_images = img_cache[:100]  # img_cache의 처음 100개 이미지를 선택
+
+    # # 그리드 형태로 만들기 (10 x 10)
+    # grid_image = make_grid(example_images, nrow=10)
+
+    # # 이미지 저장 경로
+    # save_dir = "./example_saved_images"
+    # os.makedirs(save_dir, exist_ok=True)
+    # save_image_path = os.path.join(save_dir, "example_100_images.png")
+
+    # # 이미지 저장
+    # save_image(grid_image, save_image_path)
+
+    # print(f"Saved 100 images in grid form to {save_image_path}")
+        
+
     
 
 def main(argv):
@@ -91,10 +236,10 @@ def main(argv):
     args = parser.parse_args(argv[1:])
     
     if args.pre_caching:
-        precaching(args)
+        precaching_x0(args)
         
     else:
-        distillation(args)
+        distillation_x0(args)
   
 if __name__ == "__main__":
     main(sys.argv)

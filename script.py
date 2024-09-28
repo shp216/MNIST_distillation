@@ -71,11 +71,20 @@ class UnetDown(nn.Module):
         '''
         process and downscale the image feature maps
         '''
+        # self.residual_block = ResidualConvBlock(in_channels, out_channels)
+        # self.pool = nn.MaxPool2d(2)
+
         layers = [ResidualConvBlock(in_channels, out_channels), nn.MaxPool2d(2)]
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.model(x)
+        # feature = self.residual_block(x)  # ResidualConvBlock을 거친 출력
+        # output = self.pool(feature)  # MaxPool2d를 적용한 출력
+        # return output, feature
+        feature = self.model[0](x)  # ResidualConvBlock을 거친 출력
+        output = self.model[1](feature)  # MaxPool2d를 적용한 출력
+        return output, feature
+        #return self.model(x)
 
 
 class UnetUp(nn.Module):
@@ -84,6 +93,10 @@ class UnetUp(nn.Module):
         '''
         process and upscale the image feature maps
         '''
+        
+        # self.upconv = nn.ConvTranspose2d(in_channels, out_channels, 2, 2)
+        # self.residual_block1 = ResidualConvBlock(out_channels, out_channels)
+        # self.residual_block2 = ResidualConvBlock(out_channels, out_channels)
         layers = [
             nn.ConvTranspose2d(in_channels, out_channels, 2, 2),
             ResidualConvBlock(out_channels, out_channels),
@@ -92,6 +105,11 @@ class UnetUp(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x, skip):
+        # x = torch.cat((x, skip), 1)
+        # x = self.upconv(x)  # ConvTranspose2d 적용 후 출력
+        # x = self.residual_block1(x)  # 첫 번째 ResidualConvBlock 적용
+        # output = self.residual_block2(x)  # 두 번째 ResidualConvBlock 적용
+        # return output
         x = torch.cat((x, skip), 1)
         x = self.model(x)
         return x
@@ -135,6 +153,9 @@ class ContextUnet(nn.Module):
         self.timeembed2 = EmbedFC(1, 1*n_feat)
         self.contextembed1 = EmbedFC(n_classes, 2*n_feat)
         self.contextembed2 = EmbedFC(n_classes, 1*n_feat)
+        # self.contextembed1.requires_grad_(True)
+        # self.contextembed2.requires_grad_(True)
+
 
         self.up0 = nn.Sequential(
             # nn.ConvTranspose2d(6 * n_feat, 2 * n_feat, 7, 7), # when concat temb and cemb end up w 6*n_feat
@@ -155,10 +176,11 @@ class ContextUnet(nn.Module):
     def forward(self, x, c, t, context_mask):
         # x is (noisy) image, c is context label, t is timestep, 
         # context_mask says which samples to block the context on
-
+        features = []
+        
         x = self.init_conv(x)
-        down1 = self.down1(x)
-        down2 = self.down2(down1)
+        down1, feature1 = self.down1(x)
+        down2, feature2 = self.down2(down1)
         hiddenvec = self.to_vec(down2)
 
         # convert context to one hot embedding
@@ -175,7 +197,8 @@ class ContextUnet(nn.Module):
         temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
         cemb2 = self.contextembed2(c).view(-1, self.n_feat, 1, 1)
         temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
-
+        # cemb1.requires_grad_(True)
+        # cemb2.requires_grad_(True)
         # could concatenate the context embedding here instead of adaGN
         # hiddenvec = torch.cat((hiddenvec, temb1, cemb1), 1)
 
@@ -184,7 +207,9 @@ class ContextUnet(nn.Module):
         up2 = self.up1(cemb1*up1+ temb1, down2)  # add and multiply embeddings
         up3 = self.up2(cemb2*up2+ temb2, down1)
         out = self.out(torch.cat((up3, x), 1))
-        return out
+        
+        features.extend([feature1, feature2, up1, up2])
+        return out, features, cemb1, cemb2
 
 
 def ddpm_schedules(beta1, beta2, T):
@@ -247,9 +272,10 @@ class DDPM(nn.Module):
 
         # dropout context with some probability
         context_mask = torch.bernoulli(torch.zeros_like(c)+self.drop_prob).to(self.device)
-        
+        output, features, cemb1, cemb2 = self.nn_model(x_t, c, _ts / self.n_T, context_mask)
+        return output, features, cemb1, cemb2
         # return MSE between added noise, and our predicted noise
-        return self.loss_mse(noise, self.nn_model(x_t, c, _ts / self.n_T, context_mask))
+        #return self.loss_mse(noise, self.nn_model(x_t, c, _ts / self.n_T, context_mask))
 
     def sample(self, n_sample, size, device, guide_w = 0.0):
         # we follow the guidance sampling scheme described in 'Classifier-Free Diffusion Guidance'
@@ -257,47 +283,178 @@ class DDPM(nn.Module):
         # one with context_mask=0 and the other context_mask=1
         # we then mix the outputs with the guidance scale, w
         # where w>0 means more guidance
+        
+        with torch.no_grad():
+            x_i = torch.randn(n_sample, *size).to(device)  # x_T ~ N(0, 1), sample initial noise
 
-        x_i = torch.randn(n_sample, *size).to(device)  # x_T ~ N(0, 1), sample initial noise
-        c_i = torch.arange(0,10).to(device) # context for us just cycles throught the mnist labels
-        c_i = c_i.repeat(int(n_sample/c_i.shape[0]))
+            c_i = torch.arange(0,10).to(device) # context for us just cycles throught the mnist labels
+            c_i = c_i.repeat(int(n_sample/c_i.shape[0]))
 
-        # don't drop context at test time
-        context_mask = torch.zeros_like(c_i).to(device)
+            # don't drop context at test time
+            context_mask = torch.zeros_like(c_i).to(device)
 
-        # double the batch
-        c_i = c_i.repeat(2)
-        context_mask = context_mask.repeat(2)
-        context_mask[n_sample:] = 1. # makes second half of batch context free
+            # double the batch
+            c_i = c_i.repeat(2)
+            context_mask = context_mask.repeat(2)
+            context_mask[n_sample:] = 1. # makes second half of batch context free
 
-        x_i_store = [] # keep track of generated steps in case want to plot something 
-        print()
-        for i in range(self.n_T, 0, -1):
-            print(f'sampling timestep {i}',end='\r')
-            t_is = torch.tensor([i / self.n_T]).to(device)
-            t_is = t_is.repeat(n_sample,1,1,1)
+            x_i_store = [] # keep track of generated steps in case want to plot something 
+            print()
+            for i in range(self.n_T, 0, -1):
+                print(f'sampling timestep {i}',end='\r')
+                t_is = torch.tensor([i / self.n_T]).to(device)
+                t_is = t_is.repeat(n_sample,1,1,1)
 
-            # double batch
-            x_i = x_i.repeat(2,1,1,1)
-            t_is = t_is.repeat(2,1,1,1)
+                # double batch
+                x_i = x_i.repeat(2,1,1,1)
+                t_is = t_is.repeat(2,1,1,1)
 
-            z = torch.randn(n_sample, *size).to(device) if i > 1 else 0
+                z = torch.randn(n_sample, *size).to(device) if i > 1 else 0
 
-            # split predictions and compute weighting
-            eps = self.nn_model(x_i, c_i, t_is, context_mask)
-            eps1 = eps[:n_sample]
-            eps2 = eps[n_sample:]
-            eps = (1+guide_w)*eps1 - guide_w*eps2
-            x_i = x_i[:n_sample]
-            x_i = (
-                self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
-                + self.sqrt_beta_t[i] * z
-            )
-            if i%20==0 or i==self.n_T or i<8:
-                x_i_store.append(x_i.detach().cpu().numpy())
+                # split predictions and compute weighting
+                eps, _, _, _ = self.nn_model(x_i, c_i, t_is, context_mask)
+                eps1 = eps[:n_sample]
+                eps2 = eps[n_sample:]
+                eps = (1+guide_w)*eps1 - guide_w*eps2
+                x_i = x_i[:n_sample]
+                x_i = (
+                    self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
+                    + self.sqrt_beta_t[i] * z
+                )
+                if i%20==0 or i==self.n_T or i<8:
+                    x_i_store.append(x_i.detach().cpu().numpy())
         
         x_i_store = np.array(x_i_store)
         return x_i, x_i_store
+    
+    def exclude_sample(self, n_sample, size, device, guide_w=0.0, unseen_classes=[3], batch_size=400):
+        x_i_store = []  # 전체 이미지를 저장할 리스트
+        label_store = []  # 레이블을 저장할 리스트
+
+        # 총 생성할 클래스 수
+        seen_classes = [cls for cls in range(10) if cls not in unseen_classes]
+        n_classes = len(seen_classes)
+        
+        # 각 클래스당 생성할 기본 이미지 수
+        num_per_class = n_sample // n_classes  # 각 클래스당 기본적으로 생성할 이미지 수
+        extra_images = n_sample % n_classes    # 나머지 추가로 생성할 이미지 수 (1개)
+
+        # 각 클래스별 필요한 수만큼 생성 반복
+        with torch.no_grad():
+            for class_idx, cls in enumerate(seen_classes):
+                # 기본적으로 num_per_class 생성, 추가 이미지가 필요한 경우 앞에서부터 1개씩 더 생성
+                target_count = num_per_class + (1 if class_idx < extra_images else 0)
+                class_generated = 0  # 현재 클래스에 대해 생성된 이미지 수를 추적
+
+                while class_generated < target_count:
+                    current_batch_size = min(batch_size, target_count - class_generated)
+
+                    # 초기 노이즈 생성
+                    x_i = torch.randn(current_batch_size, *size).to(device)
+                    c_i = torch.tensor([cls] * current_batch_size).to(device)  # 해당 클래스에 맞게 레이블 생성
+
+                    # don't drop context at test time
+                    context_mask = torch.zeros_like(c_i).to(device)
+
+                    # double the batch
+                    c_i = c_i.repeat(2)
+                    context_mask = context_mask.repeat(2)
+                    context_mask[current_batch_size:] = 1.  # makes second half of batch context free
+
+                    for i in range(self.n_T, 0, -1):
+                        print(f'Sampling timestep {i}', end='\r')
+                        t_is = torch.tensor([i / self.n_T]).to(device)
+                        t_is = t_is.repeat(current_batch_size, 1, 1, 1)
+
+                        # double batch
+                        x_i = x_i.repeat(2, 1, 1, 1)
+                        t_is = t_is.repeat(2, 1, 1, 1)
+
+                        z = torch.randn(current_batch_size, *size).to(device) if i > 1 else 0
+
+                        # split predictions and compute weighting
+                        eps, _, _, _ = self.nn_model(x_i, c_i, t_is, context_mask)
+                        eps1 = eps[:current_batch_size]
+                        eps2 = eps[current_batch_size:]
+                        eps = (1 + guide_w) * eps1 - guide_w * eps2
+                        x_i = x_i[:current_batch_size]
+                        x_i = (
+                            self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
+                            + self.sqrt_beta_t[i] * z
+                        )
+
+                    x_i_store.append(x_i.detach().cpu().numpy())  # 생성된 이미지를 저장
+                    label_store.extend([cls] * current_batch_size)  # 해당 클래스 레이블 저장
+                    class_generated += current_batch_size  # 현재 클래스에서 생성된 이미지 수 업데이트
+                    print(f'Generated {class_generated}/{target_count} samples for class {cls}')
+
+        # 모든 배치의 결과를 하나의 배열로 합치기
+        x_i_store = np.concatenate(x_i_store, axis=0)
+        label_store = np.array(label_store)
+
+        return torch.Tensor(x_i_store), torch.Tensor(label_store)
+
+    
+    
+    
+                   
+
+    # def exclude_sample(self, n_sample, size, device, guide_w=0.0, unseen_classes=[3], batch_size=270):
+    #     x_i_store = []  # 전체 이미지를 저장할 리스트
+
+    #     # 전체 n_sample만큼 반복적으로 생성
+    #     total_generated = 0
+    #     while total_generated < n_sample:
+    #         current_batch_size = min(batch_size, n_sample - total_generated)  # 남은 수만큼 생성
+
+    #         # 초기 노이즈 생성
+    #         x_i = torch.randn(current_batch_size, *size).to(device)
+
+    #         seen_classes = [cls for cls in range(10) if cls not in unseen_classes]
+    #         c_i = torch.tensor(seen_classes).to(device)
+    #         c_i = c_i.repeat(int(current_batch_size / len(c_i)))
+    #         c_i = c_i[:current_batch_size]  # 정확한 길이로 자르기
+
+    #         # don't drop context at test time
+    #         context_mask = torch.zeros_like(c_i).to(device)
+
+    #         # double the batch
+    #         c_i = c_i.repeat(2)
+    #         context_mask = context_mask.repeat(2)
+    #         context_mask[current_batch_size:] = 1.  # makes second half of batch context free
+
+    #         for i in range(self.n_T, 0, -1):
+    #             print(f'Sampling timestep {i}', end='\r')
+    #             t_is = torch.tensor([i / self.n_T]).to(device)
+    #             t_is = t_is.repeat(current_batch_size, 1, 1, 1)
+
+    #             # double batch
+    #             x_i = x_i.repeat(2, 1, 1, 1)
+    #             t_is = t_is.repeat(2, 1, 1, 1)
+
+    #             z = torch.randn(current_batch_size, *size).to(device) if i > 1 else 0
+
+    #             # split predictions and compute weighting
+    #             eps = self.nn_model(x_i, c_i, t_is, context_mask)
+    #             eps1 = eps[:current_batch_size]
+    #             eps2 = eps[current_batch_size:]
+    #             eps = (1 + guide_w) * eps1 - guide_w * eps2
+    #             x_i = x_i[:current_batch_size]
+    #             x_i = (
+    #                 self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
+    #                 + self.sqrt_beta_t[i] * z
+    #             )
+
+    #         x_i_store.append(x_i.detach().cpu().numpy())  # 생성된 이미지를 저장
+    #         total_generated += current_batch_size  # 생성된 이미지 수 업데이트
+    #         print(f'Generated {total_generated}/{n_sample} samples')
+
+    #     # 모든 배치의 결과를 하나의 배열로 합치기
+    #     x_i_store = np.concatenate(x_i_store, axis=0)
+        
+    #     return torch.Tensor(x_i_store), None
+
+
 
     def cache_step(self, xt, c, t, guide_w = 0.0):
         
@@ -306,7 +463,7 @@ class DDPM(nn.Module):
         context_mask = torch.zeros_like(c).to(device)
         
         if guide_w==0.0:
-            model_output = self.nn_model(xt, c, t, context_mask)
+            model_output, _, _, _ = self.nn_model(xt, c, t, context_mask)
             
             z = torch.randn(b, *size).to(device)
             x_prev = (
