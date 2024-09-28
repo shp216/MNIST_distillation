@@ -1,4 +1,6 @@
 import torch
+from torchvision.utils import save_image, make_grid
+
 from tqdm import tqdm
 from script import ContextUnet, DDPM
 import argparse, sys, os
@@ -11,6 +13,8 @@ def get_parser():
     parser.add_argument("--batch_size", type=int, default=64, help='batch size')
     
     
+    parser.add_argument("--logdir", type=str, default='./logs', help='log directory')
+    parser.add_argument("--savedir", type=str, default='./images', help='save directory')
     
 def load_teacher_model(model_path, device="cuda:0"):
     # Define the model architecture that matches the saved model
@@ -36,16 +40,43 @@ def load_teacher_model(model_path, device="cuda:0"):
 
 def precaching(args):
     device = torch.device('cuda:0')
-  
     model_path = "./data/diffusion_outputs10/model_39.pth"  # Replace with your actual model path
     T_model = load_teacher_model(model_path)
+    T_model.to(device)
     
+    ws_test = [0.0, 0.5, 2.0]
+    n_classes = 10
+    
+    
+    T_model.eval()
+    with torch.no_grad():
+        n_sample = 4*n_classes
+        for w_i, w in enumerate(ws_test):
+            x_gen, x_gen_store = T_model.sample(n_sample, (1, 28, 28), device, guide_w=w)
+                        
+            grid = make_grid(x_gen*-1 + 1, nrow=10)
+            save_image(grid, args.save_dir + f"image_w{w}.png")
+            print('saved image at ' + args.save_dir + f"image_w{w}.png")
+
+    # add sampler (use DDPM class)
+    
+    # cache tensor
+    
+    # cache update
     
   
 def distillation(args):
     device = torch.device('cuda:0')
     model_path = "./data/diffusion_outputs10/model_39.pth"  # Replace with your actual model path
     T_model = load_teacher_model(model_path)
+    
+    # S_model
+    
+    # optimizer
+    
+    # cache dataset
+    
+    # traning loop
     
     
 

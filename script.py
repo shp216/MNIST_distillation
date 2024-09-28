@@ -299,7 +299,27 @@ class DDPM(nn.Module):
         x_i_store = np.array(x_i_store)
         return x_i, x_i_store
 
-
+    def cache_step(self, xt, c, t, guide_w = 0.0):
+        
+        b, *size ,device = *xt.shape, xt.device
+        
+        context_mask = torch.zeros_like(c).to(device)
+        
+        if guide_w==0.0:
+            model_output = self.nn_model(xt, c, t, context_mask)
+            
+            z = torch.randn(b, *size).to(device)
+            x_prev = (
+                self.oneover_sqrta[t] * (xt - model_output * self.mab_over_sqrtmab[t])
+                + self.sqrt_beta_t[t] * z
+            )
+        
+        return x_prev, model_output
+    
+    
+    
+    
+    
 def train_mnist():
 
     # hardcoding these here
