@@ -13,9 +13,11 @@ def get_parser():
     parser.add_argument("--batch_size", type=int, default=64, help='batch size')
     
     
-    parser.add_argument("--logdir", type=str, default='./logs', help='log directory')
-    parser.add_argument("--savedir", type=str, default='./images', help='save directory')
+    parser.add_argument("--logdir", type=str, default='./logs/', help='log directory')
+    parser.add_argument("--save_dir", type=str, default='./images/', help='save directory')
     
+    return parser
+
 def load_teacher_model(model_path, device="cuda:0"):
     # Define the model architecture that matches the saved model
     n_classes = 10
@@ -40,7 +42,7 @@ def load_teacher_model(model_path, device="cuda:0"):
 
 def precaching(args):
     device = torch.device('cuda:0')
-    model_path = "./data/diffusion_outputs10/model_39.pth"  # Replace with your actual model path
+    model_path = "./model_39.pth"  # Replace with your actual model path
     T_model = load_teacher_model(model_path)
     T_model.to(device)
     
@@ -67,7 +69,7 @@ def precaching(args):
   
 def distillation(args):
     device = torch.device('cuda:0')
-    model_path = "./data/diffusion_outputs10/model_39.pth"  # Replace with your actual model path
+    model_path = "./model_39.pth"  # Replace with your actual model path
     T_model = load_teacher_model(model_path)
     
     # S_model
@@ -85,7 +87,7 @@ def main(argv):
     parser = get_parser()
     args = parser.parse_args(argv[1:])
     
-    if args.precaching:
+    if args.pre_caching:
         precaching(args)
         
     else:
