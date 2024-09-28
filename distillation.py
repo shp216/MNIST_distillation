@@ -49,7 +49,10 @@ def precaching(args):
     ws_test = [0.0, 0.5, 2.0]
     n_classes = 10
     
-    
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir, exist_ok=True)
+        print(f"Created directory: {args.savedir}")
+
     T_model.eval()
     with torch.no_grad():
         n_sample = 4*n_classes
