@@ -59,6 +59,12 @@ def load_teacher_model(model_path, n_T, device="cuda:0"):
     teacher_model.eval()  # Set the model to evaluation mode
     print(f"Teacher Model loaded:  loaded from {model_path}")
     
+    # Disable gradient calculations for the teacher model
+    for param in teacher_model.parameters():
+        param.requires_grad = False
+
+    print("frozen all parameters in Teacher model")
+    
     return teacher_model
 
 def load_student_model(n_T, device="cuda:0"):
