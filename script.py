@@ -460,16 +460,21 @@ class DDPM(nn.Module):
     def cache_step(self, xt, c, t, guide_w = 0.0):
         
         b, *size ,device = *xt.shape, xt.device
-        
+        ind = t.long()
+
         context_mask = torch.zeros_like(c).to(device)
         
         if guide_w==0.0:
             model_output, _, _, _ = self.nn_model(xt, c, t, context_mask)
-            
+
             z = torch.randn(b, *size).to(device)
+
+            oneover_sqrta = self.oneover_sqrta[ind].view(-1, 1, 1, 1)  # [512] -> [512, 1, 1, 1]
+            mab_over_sqrtmab = self.mab_over_sqrtmab[ind].view(-1, 1, 1, 1) 
+            sqrt_beta_t = self.sqrt_beta_t[ind].view(-1, 1, 1, 1) 
+
             x_prev = (
-                self.oneover_sqrta[t] * (xt - model_output * self.mab_over_sqrtmab[t])
-                + self.sqrt_beta_t[t] * z
+                oneover_sqrta * (xt - model_output * mab_over_sqrtmab) + sqrt_beta_t * z
             )
         
         return x_prev, model_output
