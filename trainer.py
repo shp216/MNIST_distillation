@@ -25,9 +25,13 @@ class distillation_DDPM_trainer(nn.Module):
         if self.distill_features:
             # Teacher model forward pass (in evaluation mode)
             self.T_model.eval()
-            with torch.no_grad():
-                #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+            if self.inversion_loss:
                 T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise)
+                
+            else:
+                with torch.no_grad():
+                    #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+                    T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise)
                 
 
             #student_output, student_features = self.S_model.forward_features(x_t, t)
@@ -44,9 +48,13 @@ class distillation_DDPM_trainer(nn.Module):
             
         else:
             self.T_model.eval()
-            with torch.no_grad():
-                #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+            if self.inversion_loss:
                 T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise)
+                
+            else:
+                with torch.no_grad():
+                    #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+                    T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise)
                 
             
             self.S_model.train()
@@ -55,15 +63,19 @@ class distillation_DDPM_trainer(nn.Module):
             output_loss = self.training_loss(S_output, T_output)
             total_loss = output_loss
         
-        T_cemb1.requires_grad_(True)
-        T_cemb2.requires_grad_(True)
-        S_cemb1.requires_grad_(True)
-        S_cemb2.requires_grad_(True)
+        # T_cemb1.requires_grad_(True)
+        # T_cemb2.requires_grad_(True)
+        # S_cemb1.requires_grad_(True)
+        # S_cemb2.requires_grad_(True)
         if self.inversion_loss:
-            T_grad_cemb1 = torch.autograd.grad(total_loss, T_cemb1, create_graph=True)[0].detach()
-            T_grad_cemb2 = torch.autograd.grad(total_loss, T_cemb2, create_graph=True)[0].detach()
-            S_grad_cemb1 = torch.autograd.grad(total_loss, S_cemb1, create_graph=True)[0].detach()
-            S_grad_cemb2 = torch.autograd.grad(total_loss, S_cemb2, create_graph=True)[0].detach()
+            # T_grad_cemb1 = T_cemb1.detach()
+            # T_grad_cemb2 = T_cemb2.detach()
+            T_grad_cemb1 = torch.autograd.grad(total_loss, T_cemb1, create_graph=True)[0]
+            T_grad_cemb2 = torch.autograd.grad(total_loss, T_cemb2, create_graph=True)[0]
+            S_grad_cemb1 = torch.autograd.grad(total_loss, S_cemb1, create_graph=True)[0]
+            S_grad_cemb2 = torch.autograd.grad(total_loss, S_cemb2, create_graph=True)[0]
+            
+            
             
             grad_loss1 = self.training_loss(S_grad_cemb1, T_grad_cemb1)
             grad_loss2 = self.training_loss(S_grad_cemb2, T_grad_cemb2)

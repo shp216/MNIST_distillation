@@ -197,8 +197,8 @@ class ContextUnet(nn.Module):
         temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
         cemb2 = self.contextembed2(c).view(-1, self.n_feat, 1, 1)
         temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
-        # cemb1.requires_grad_(True)
-        # cemb2.requires_grad_(True)
+        cemb1.requires_grad_(True)
+        cemb2.requires_grad_(True)
         # could concatenate the context embedding here instead of adaGN
         # hiddenvec = torch.cat((hiddenvec, temb1, cemb1), 1)
 
