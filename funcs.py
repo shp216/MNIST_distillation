@@ -134,6 +134,10 @@ def sample_images(S_model, num_save_image, save_dir, step, device):
     x_gen = (x_gen * -1 + 1)  # 흑백 대비
     x_gen_tensor = torch.tensor(x_gen) if not isinstance(x_gen, torch.Tensor) else x_gen
     grid_T = make_grid(x_gen_tensor, nrow=10) 
+    
+    # 디렉터리 존재 여부 확인 후 생성
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
     save_image(grid_T, os.path.join(save_dir, f"sample_image_step_{step}.png"))
     print(f"save sample_image_step_{step}.png in {save_dir}")
 

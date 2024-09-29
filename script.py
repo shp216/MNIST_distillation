@@ -256,13 +256,14 @@ class DDPM(nn.Module):
         self.drop_prob = drop_prob
         self.loss_mse = nn.MSELoss()
 
-    def forward(self, x, c, t):
+    def forward(self, x, c, t, noise):
         """
         this method is used in training, so samples t and noise randomly
         """
         _ts = t
         #_ts = torch.randint(1, self.n_T+1, (x.shape[0],)).to(self.device)  # t ~ Uniform(0, n_T)
-        noise = torch.randn_like(x)  # eps ~ N(0, 1)
+        #noise = torch.randn_like(x)  # eps ~ N(0, 1)
+        noise = noise
 
         x_t = (
             self.sqrtab[_ts, None, None, None] * x
