@@ -38,11 +38,12 @@ def visualize_t_cache_distribution(t_cache, cache_n):
     plt.close()
     
 
-def load_teacher_model(model_path, device="cuda:0"):
+def load_teacher_model(model_path, n_T, device="cuda:0"):
     # Define the model architecture that matches the saved model
     n_classes = 10
     n_feat = 128  # or whatever value you used during training
-    n_T = 400     # or whatever value you used during training
+    #n_T = 400     # or whatever value you used during training
+    n_T = n_T
 
     # Initialize the same model structure
     teacher_model = DDPM(
@@ -60,11 +61,12 @@ def load_teacher_model(model_path, device="cuda:0"):
     
     return teacher_model
 
-def load_student_model(device="cuda:0"):
+def load_student_model(n_T, device="cuda:0"):
     # Define the model architecture that matches the saved model
     n_classes = 10
     n_feat = 128  # or whatever value you used during training
-    n_T = 400     # or whatever value you used during training
+    #n_T = 400     # or whatever value you used during training
+    n_T = n_T
     student_model = DDPM(
         nn_model=ContextUnet(in_channels=1, n_feat=n_feat, n_classes=n_classes), 
         betas=(1e-4, 0.02), 
@@ -129,8 +131,22 @@ def save_checkpoint(S_model, optimizer, step, logdir):
 
 def sample_images(S_model, num_save_image, save_dir, step, device):
     x_gen, _ = S_model.sample(num_save_image, (1, 28, 28), device, guide_w=2.0)
-    x_gen = (x_gen * -1 + 1)  # 이미지 범위를 [0, 1]로 변환
+    x_gen = (x_gen * -1 + 1)  # 흑백 대비
     x_gen_tensor = torch.tensor(x_gen) if not isinstance(x_gen, torch.Tensor) else x_gen
     grid_T = make_grid(x_gen_tensor, nrow=10) 
     save_image(grid_T, os.path.join(save_dir, f"sample_image_step_{step}.png"))
     print(f"save sample_image_step_{step}.png in {save_dir}")
+
+
+
+def show_images(tensor, num_images=16, nrow=4):
+    # 텐서에서 지정한 수의 이미지를 가져옵니다.
+    images = tensor[:num_images]
+    
+    # make_grid를 사용하여 이미지를 그리드 형태로 변환합니다.
+    grid_img = make_grid(images, nrow=nrow)
+
+    # 이미지를 numpy 배열로 변환하고 축을 (H, W, C) 형태로 변환합니다.
+    plt.imshow(grid_img.permute(1, 2, 0).cpu().numpy(), cmap='gray')
+    plt.axis('off')
+    plt.show()
