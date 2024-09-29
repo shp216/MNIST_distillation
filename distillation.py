@@ -11,7 +11,7 @@ import numpy as np
 from trainer import distillation_DDPM_trainer
 from dataset import MNISTDataset
 from torch.utils.data import Dataset, DataLoader
-from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights
+from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights, show_images
 import warnings
 
 # 특정 경고 메시지를 무시
@@ -29,6 +29,7 @@ def get_parser():
     parser.add_argument("--batch_size", type=int, default=256, help='batch size')
     parser.add_argument("--num_per_class", type=int, default=30, help='number of classes in MNIST')
 
+    parser.add_argument("--n_T", type=int, default=400, help='number of timesteps in diffusion step')
     parser.add_argument("--n_classes", type=int, default=10, help='number of classes in MNIST')
     parser.add_argument("--n_sample", type=int, default=60000, help='number of total samples in MNIST')
     parser.add_argument("--cache_n", type=int, default=60000, help='number of cache data')
@@ -87,10 +88,10 @@ def precaching(args):
 def precaching_x0(args):
     device = torch.device('cuda:0')
     model_path = "./model_39.pth"  # Replace with your actual model path
-    T_model = load_teacher_model(model_path)
+    T_model = load_teacher_model(model_path, args.n_T)
     
     # S_model
-    S_model = load_student_model()
+    S_model = load_student_model(args.n_T)
     # optimizer
     
     if not os.path.exists(args.eval_dir):
@@ -114,7 +115,7 @@ def precaching_x0(args):
             # exclude_sample에서 이미지와 해당 레이블을 반환받음
             x_gen, labels = T_model.exclude_sample(n_sample, (1, 28, 28), device, guide_w=w)
             
-            x_gen = (x_gen * -1 + 1)  # 이미지 범위를 [0, 1]로 변환
+            #x_gen = (x_gen * -1 + 1)  # 이미지 범위를 [0, 1]로 변환
             x_gen_tensor = torch.tensor(x_gen) if not isinstance(x_gen, torch.Tensor) else x_gen
 
             # 생성된 이미지를 img_cache에 저장
@@ -157,10 +158,10 @@ def precaching_x0(args):
 def distillation_x0(args):
     device = torch.device('cuda:0')
     model_path = "./model_39.pth"  # Replace with your actual model path
-    T_model = load_teacher_model(model_path)
+    T_model = load_teacher_model(model_path, args.n_T)
     
     # S_model
-    S_model = load_student_model()
+    S_model = load_student_model(args.n_T)
     load_pretrained_weights(S_model, model_path)
     # optimizer
     optim = torch.optim.Adam(S_model.parameters(), lr=args.lr)
@@ -185,8 +186,8 @@ def distillation_x0(args):
         print(f'epoch {ep}')
         S_model.train()
 
-        # # linear lrate decay
-        # optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+        # linear lrate decay
+        optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
 
         pbar = tqdm(dataloader)
         loss_ema = None
@@ -194,8 +195,9 @@ def distillation_x0(args):
             optim.zero_grad()
             x = x.to(device)
             c = c.to(device)
-            
-            output_loss, total_loss = trainer(x,c, args.feature_loss_weight, args.inversion_loss_weight)
+            t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
+            x = (x * -1 + 1)
+            output_loss, total_loss = trainer(x,c,t, args.feature_loss_weight, args.inversion_loss_weight)
             total_loss.backward()
             pbar.set_description(f"loss: {total_loss:.4f}")
             optim.step()

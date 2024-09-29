@@ -17,7 +17,7 @@ class distillation_DDPM_trainer(nn.Module):
         self.training_loss = nn.MSELoss()
     
         
-    def forward(self, x_t, c, feature_loss_weight = 0.1, inversion_loss_weight=0.1):
+    def forward(self, x_t, c, t, feature_loss_weight = 0.1, inversion_loss_weight=0.1):
         """
         Perform the forward pass for knowledge distillation.
         """
@@ -27,12 +27,12 @@ class distillation_DDPM_trainer(nn.Module):
             self.T_model.eval()
             with torch.no_grad():
                 #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
-                T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x_t,c)
+                T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x_t,c,t)
                 
 
             #student_output, student_features = self.S_model.forward_features(x_t, t)
             self.S_model.train()
-            S_output, S_features, S_cemb1, S_cemb2 = self.S_model(x_t,c)
+            S_output, S_features, S_cemb1, S_cemb2 = self.S_model(x_t,c,t)
                             
             output_loss = self.training_loss(S_output, T_output)
             
@@ -46,11 +46,11 @@ class distillation_DDPM_trainer(nn.Module):
             self.T_model.eval()
             with torch.no_grad():
                 #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
-                T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x_t,c)
+                T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x_t,c,t)
                 
             
             self.S_model.train()
-            S_output, S_features, S_cemb1, S_cemb2 = self.S_model(x_t,c)
+            S_output, S_features, S_cemb1, S_cemb2 = self.S_model(x_t,c,t)
                 
             output_loss = self.training_loss(S_output, T_output)
             total_loss = output_loss
