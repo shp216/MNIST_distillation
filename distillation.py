@@ -77,13 +77,13 @@ def precaching(args):
         
         for i in range(1,int(n_T/2)):
             # 0부터 i*n까지의 값
-            indices.extend(range(i * cache_size))
+            indices.extend(range(i * cache_per_timestep))
             
             # (1000-i)*n부터 500*n까지의 값
-            indices.extend(range((n_T - i) * cache_size-1, int(n_T/2) * cache_per_timestep-1, -1))
+            indices.extend(range((n_T - i) * cache_per_timestep-1, int(n_T/2) * cache_per_timestep-1, -1))
             
         for i in range(int(n_T/2)):
-            indices.extend(range(int(n_T/2) * cache_size))
+            indices.extend(range(int(n_T/2) * cache_per_timestep))
         
         for batch_start in trange(0, cache_size, args.caching_batch_size, desc="Pre-class_caching"):
             batch_end = min(batch_start + args.caching_batch_size, cache_size)  # 인덱스 범위를 벗어나지 않도록 처리
