@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision.utils import save_image, make_grid
 
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from script import ContextUnet, DDPM
 import argparse, sys, os
 import time
@@ -11,7 +11,7 @@ import numpy as np
 from trainer import distillation_DDPM_trainer
 from dataset import MNISTDataset
 from torch.utils.data import Dataset, DataLoader
-from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights
+from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights, visualize_t_cache_distribution
 import warnings
 
 # 특정 경고 메시지를 무시
@@ -32,6 +32,7 @@ def get_parser():
     parser.add_argument("--n_classes", type=int, default=10, help='number of classes in MNIST')
     parser.add_argument("--n_sample", type=int, default=60000, help='number of total samples in MNIST')
     parser.add_argument("--cache_n", type=int, default=60000, help='number of cache data')
+    parser.add_argument("--caching_batch_size", type=int, default=512, help='caching batch size')
     parser.add_argument("--num_save_image", type=int, default=50, help='number of total save images in save_step')
 
 
@@ -60,30 +61,66 @@ def precaching(args):
     T_model = load_teacher_model(model_path)
     T_model.to(device)
     
-    ws_test = [0.0, 0.5, 2.0]
-    n_classes = 10
+    n_T = T_model.n_T
+    cache_size = args.cache_n
+    cache_per_timestep = cache_size/n_T
     
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir, exist_ok=True)
-        print(f"Created directory: {args.save_dir}")
-
-    T_model.eval()
+    img_cache = torch.zeros((cache_size, 1, 28, 28), dtype=torch.float32, device=device)  # MNIST 이미지 크기
+    t_cache = torch.ones(cache_size, dtype=torch.long, device=device)*(n_T-1)
+    
+    selected_tensor = torch.tensor([0,1,2,4,5,6,7,8,9], device=device)
+    class_cache = selected_tensor[torch.randint(0, len(selected_tensor), (cache_size,), device=device)]
+    
     with torch.no_grad():
-        n_sample = 4*n_classes
-        for w_i, w in enumerate(ws_test):
-            x_gen, x_gen_store = T_model.sample(n_sample, (1, 28, 28), device, guide_w=w)
-                        
-            grid = make_grid(x_gen*-1 + 1, nrow=10)
-            save_image(grid, args.save_dir + f"image_w{w}.png")
-            print('saved image at ' + args.save_dir + f"image_w{w}.png")
+        indices = []
+        
+        for i in range(1,int(n_T/2)):
+            # 0부터 i*n까지의 값
+            indices.extend(range(i * cache_size))
+            
+            # (1000-i)*n부터 500*n까지의 값
+            indices.extend(range((n_T - i) * cache_size-1, int(n_T/2) * cache_per_timestep-1, -1))
+            
+        for i in range(int(n_T/2)):
+            indices.extend(range(int(n_T/2) * cache_size))
+        
+        for batch_start in trange(0, cache_size, args.caching_batch_size, desc="Pre-class_caching"):
+            batch_end = min(batch_start + args.caching_batch_size, cache_size)  # 인덱스 범위를 벗어나지 않도록 처리
+            class_batch = class_cache[batch_start:batch_end]
+            
+            
+            
+        # Batch size만큼의 인덱스를 뽑아오는 과정
+        for batch_start in trange(0, len(indices), args.caching_batch_size, desc="Pre-caching"):
+            batch_end = min(batch_start + args.caching_batch_size, len(indices))  # 인덱스 범위를 벗어나지 않도록 처리
+            batch_indices = indices[batch_start:batch_end]  # Batch size만큼 인덱스 선택
 
-    # add sampler (use DDPM class)
-    
-    # cache tensor
-    
-    # cache update
-    
-  
+            # 인덱스를 이용해 배치 선택
+            img_batch = img_cache[batch_indices]
+            t_batch = t_cache[batch_indices]
+            
+
+            x_prev, _ = T_model.cache_step(img_batch, class_batch, t_batch)
+
+            # 결과를 저장
+            img_cache[batch_indices] = x_prev
+            t_cache[batch_indices] -= 1
+
+            if batch_start % 10 == 0:  # 예를 들어, 100 스텝마다 시각화
+                visualize_t_cache_distribution(t_cache, cache_size)
+                
+        visualize_t_cache_distribution(t_cache, cache_size)
+        
+        save_dir = f"./{args.cache_dir}"  # 이미지와 레이블을 저장할 경로
+        os.makedirs(save_dir, exist_ok=True)
+
+        # img_cache와 class_cache를 .pt 파일로 저장
+        torch.save(img_cache, os.path.join(save_dir, f"mnist_images.pt"))
+        torch.save(t_cache, os.path.join(save_dir, f"mnist_t.pt"))
+        torch.save(class_cache, os.path.join(save_dir, f"mnist_labels.pt"))
+
+        print(f"Saved MNIST images, timestep and labels to {save_dir}")
+        
 def precaching_x0(args):
     device = torch.device('cuda:0')
     model_path = "./model_39.pth"  # Replace with your actual model path

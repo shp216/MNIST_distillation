@@ -18,7 +18,25 @@ from script import ContextUnet, DDPM
 
 from ldm.util import instantiate_from_config
 
+def visualize_t_cache_distribution(t_cache, cache_n):
+    # CPU로 이동하여 numpy 배열로 변환
+    t_cache_cpu = t_cache.cpu().numpy()
 
+    # 히스토그램을 그려 분포 확인 (bin 수를 1000으로 설정)
+    plt.figure(figsize=(12, 6))
+    plt.hist(t_cache_cpu, range=(0, 1000), bins=1000, alpha=0.7, color='blue')
+    plt.title('Distribution of t_cache')
+    plt.xlabel('Values')
+    plt.ylabel('Frequency')
+    plt.ylim(0, cache_n*10)
+    plt.grid(True)
+
+    # 저장할 디렉토리가 없다면 생성
+    os.makedirs('./cache_test', exist_ok=True)
+
+    plt.savefig('./cache_test/temp_frame.png')
+    plt.close()
+    
 
 def load_teacher_model(model_path, device="cuda:0"):
     # Define the model architecture that matches the saved model
