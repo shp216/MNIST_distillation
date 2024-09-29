@@ -1,3 +1,6 @@
 *.png
 *.zip
 *__pycache__*
+cache
+logs
+*.pt
