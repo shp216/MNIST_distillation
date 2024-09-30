@@ -21,6 +21,8 @@ def get_parser():
     parser = argparse.ArgumentParser()
     
     parser.add_argument("--pre_caching", action='store_true', help='only precaching')
+    parser.add_argument("--pre_caching_x0", action='store_true', help='only x0 precaching')
+    
     parser.add_argument("--inversion_loss", action='store_true', help='using inversion_loss')
     parser.add_argument("--distill_features", action='store_true', help='perform knowledge distillation using intermediate features')
 
@@ -59,15 +61,15 @@ def get_parser():
 def precaching(args):
     device = torch.device('cuda:0')
     model_path = "./model_39.pth"  # Replace with your actual model path
-    T_model = load_teacher_model(model_path)
+    T_model = load_teacher_model(model_path, args.n_T)
     T_model.to(device)
     
-    n_T = T_model.n_T
+    n_T = args.n_T
     cache_size = args.cache_n
-    cache_per_timestep = cache_size/n_T
+    cache_per_timestep = int(cache_size/n_T)
     
     img_cache = torch.zeros((cache_size, 1, 28, 28), dtype=torch.float32, device=device)  # MNIST 이미지 크기
-    t_cache = torch.ones(cache_size, dtype=torch.long, device=device)*(n_T-1)
+    t_cache = torch.ones((cache_size,), dtype=torch.float32, device=device)*(n_T-1)
     
     selected_tensor = torch.tensor([0,1,2,4,5,6,7,8,9], device=device)
     class_cache = selected_tensor[torch.randint(0, len(selected_tensor), (cache_size,), device=device)]
@@ -83,14 +85,8 @@ def precaching(args):
             indices.extend(range((n_T - i) * cache_per_timestep-1, int(n_T/2) * cache_per_timestep-1, -1))
             
         for i in range(int(n_T/2)):
-            indices.extend(range(int(n_T/2) * cache_per_timestep))
-        
-        for batch_start in trange(0, cache_size, args.caching_batch_size, desc="Pre-class_caching"):
-            batch_end = min(batch_start + args.caching_batch_size, cache_size)  # 인덱스 범위를 벗어나지 않도록 처리
-            class_batch = class_cache[batch_start:batch_end]
-            
-            
-            
+            indices.extend(range(int(n_T/2) * cache_per_timestep))          
+                        
         # Batch size만큼의 인덱스를 뽑아오는 과정
         for batch_start in trange(0, len(indices), args.caching_batch_size, desc="Pre-caching"):
             batch_end = min(batch_start + args.caching_batch_size, len(indices))  # 인덱스 범위를 벗어나지 않도록 처리
@@ -99,7 +95,7 @@ def precaching(args):
             # 인덱스를 이용해 배치 선택
             img_batch = img_cache[batch_indices]
             t_batch = t_cache[batch_indices]
-            
+            class_batch = class_cache[batch_indices]
 
             x_prev, _ = T_model.cache_step(img_batch, class_batch, t_batch)
 
@@ -107,10 +103,10 @@ def precaching(args):
             img_cache[batch_indices] = x_prev
             t_cache[batch_indices] -= 1
 
-            if batch_start % 10 == 0:  # 예를 들어, 100 스텝마다 시각화
-                visualize_t_cache_distribution(t_cache, cache_size)
+            if batch_start % 1000 == 0:  # 예를 들어, 100 스텝마다 시각화
+                visualize_t_cache_distribution(t_cache, cache_per_timestep)
                 
-        visualize_t_cache_distribution(t_cache, cache_size)
+        visualize_t_cache_distribution(t_cache, cache_per_timestep)
         
         save_dir = f"./{args.cache_dir}"  # 이미지와 레이블을 저장할 경로
         os.makedirs(save_dir, exist_ok=True)
@@ -275,9 +271,12 @@ def main(argv):
     parser = get_parser()
     args = parser.parse_args(argv[1:])
     
-    if args.pre_caching:
+    if args.pre_caching_x0:
         precaching_x0(args)
-        
+
+    if args.pre_caching:
+        precaching(args)
+
     else:
         distillation_x0(args)
   

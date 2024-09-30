@@ -29,9 +29,13 @@ class distillation_DDPM_trainer(nn.Module):
         if self.distill_features:
             # Teacher model forward pass (in evaluation mode)
             self.T_model.eval()
-            with torch.no_grad():
-                #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+            if self.inversion_loss:
                 T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise,context_mask)
+                
+            else:
+                with torch.no_grad():
+                    #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+                    T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise,context_mask)
                 
 
             #student_output, student_features = self.S_model.forward_features(x_t, t)
@@ -48,9 +52,13 @@ class distillation_DDPM_trainer(nn.Module):
             
         else:
             self.T_model.eval()
-            with torch.no_grad():
-                #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+            if self.inversion_loss:
                 T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise,context_mask)
+                
+            else:
+                with torch.no_grad():
+                    #teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
+                    T_output, T_features, T_cemb1, T_cemb2 = self.T_model(x0,c,t,noise,context_mask)
                 
             
             self.S_model.train()
