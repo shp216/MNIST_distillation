@@ -8,8 +8,8 @@ import argparse, sys, os
 import time
 from PIL import Image
 import numpy as np
-from trainer import distillation_DDPM_trainer
-from dataset import MNISTDataset
+from trainer import distillation_DDPM_trainer, distillation_DDPM_trainer_x0
+from dataset import MNISTDataset, MNISTDataset_x0
 from torch.utils.data import Dataset, DataLoader
 from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights, show_images, visualize_t_cache_distribution
 import warnings
@@ -22,6 +22,8 @@ def get_parser():
     
     parser.add_argument("--pre_caching", action='store_true', help='only precaching')
     parser.add_argument("--pre_caching_x0", action='store_true', help='only x0 precaching')
+    
+    parser.add_argument("--x0_cache", action='store_false', help='using x0_cache')
     
     parser.add_argument("--inversion_loss", action='store_true', help='using inversion_loss')
     parser.add_argument("--distill_features", action='store_true', help='perform knowledge distillation using intermediate features')
@@ -123,10 +125,6 @@ def precaching_x0(args):
     model_path = "./model_39.pth"  # Replace with your actual model path
     T_model = load_teacher_model(model_path, args.n_T)
     
-    # S_model
-    S_model = load_student_model(args.n_T)
-    # optimizer
-    
     if not os.path.exists(args.eval_dir):
         os.makedirs(args.save_dir, exist_ok=True)
         print(f"Created directory: {args.eval_dir}")
@@ -201,70 +199,93 @@ def distillation_x0(args):
     # cache dataset
     
     # Dataset, DataLoader 설정
-    img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
-    label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
-    img_cache = torch.load(img_cache_path)
-    class_cache = torch.load(label_cache_path)
-    
-    cache_dataset = MNISTDataset(img_cache, class_cache)
-    dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
-
-    
-    # trainer 설정
-    trainer = distillation_DDPM_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
-
-    
-    # training Loop
-    for ep in range(args.n_epoch):
-        print(f'epoch {ep}')
-        S_model.train()
-
-        # linear lrate decay
-        optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
-
-        pbar = tqdm(dataloader)
-        loss_ema = None
-        for x, c in pbar:
-            optim.zero_grad()
-            x = x.to(device)
-            c = c.to(device)
-            t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
-            x = (x * -1 + 1)
-            noise = torch.randn_like(x)
-            output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
-            total_loss.backward()
-            pbar.set_description(f"loss: {total_loss:.4f}")
-            optim.step()
-    
-        if ep % args.save_step == 0:
-            save_checkpoint(S_model, optim, ep, args.logdir)      
-            
-        if ep % args.sample_step == 0:
-            S_model.eval()
-            sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
-            
-
-    # print("img_cache shape:", img_cache.shape)
-    # print("class_cache shape:", class_cache.shape)
-    
-    # # 100개의 이미지를 가져옵니다
-    # example_images = img_cache[:100]  # img_cache의 처음 100개 이미지를 선택
-
-    # # 그리드 형태로 만들기 (10 x 10)
-    # grid_image = make_grid(example_images, nrow=10)
-
-    # # 이미지 저장 경로
-    # save_dir = "./example_saved_images"
-    # os.makedirs(save_dir, exist_ok=True)
-    # save_image_path = os.path.join(save_dir, "example_100_images.png")
-
-    # # 이미지 저장
-    # save_image(grid_image, save_image_path)
-
-    # print(f"Saved 100 images in grid form to {save_image_path}")
+    if args.x0_cache:
+        img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
+        label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
+        img_cache = torch.load(img_cache_path)
+        class_cache = torch.load(label_cache_path)
         
+        cache_dataset = MNISTDataset_x0(img_cache, class_cache)        
+        
+        dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
 
-    
+        # trainer 설정
+        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
+
+        
+        # training Loop
+        for ep in range(args.n_epoch):
+            print(f'epoch {ep}')
+            S_model.train()
+
+            # linear lrate decay
+            optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+
+            pbar = tqdm(dataloader)
+            loss_ema = None
+            for x, c in pbar:
+                optim.zero_grad()
+                x = x.to(device)
+                c = c.to(device)
+                t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
+                x = (x * -1 + 1)
+                noise = torch.randn_like(x)
+                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
+                total_loss.backward()
+                pbar.set_description(f"loss: {total_loss:.4f}")
+                optim.step()
+        
+            if ep % args.save_step == 0:
+                save_checkpoint(S_model, optim, ep, args.logdir)      
+                
+            if ep % args.sample_step == 0:
+                S_model.eval()
+                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
+                
+    else:
+        img_cache_path = f"./{args.cache_dir}/mnist_images.pt"
+        t_cache_path = f"./{args.cache_dir}/mnist_t.pt"
+        label_cache_path = f"./{args.cache_dir}/mnist_labels.pt"
+        
+        img_cache = torch.load(img_cache_path)
+        t_cache = torch.load(t_cache_path)
+        class_cache = torch.load(label_cache_path)
+        
+        cache_dataset = MNISTDataset(img_cache, t_cache, class_cache)     
+        dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
+
+        # trainer 설정
+        trainer = distillation_DDPM_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
+
+        
+        # training Loop
+        for ep in range(args.n_epoch):
+            print(f'epoch {ep}')
+            S_model.train()
+
+            # linear lrate decay
+            optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+
+            pbar = tqdm(dataloader)
+            loss_ema = None
+            for x, t, c, idx in pbar:
+                optim.zero_grad()
+                x = x.to(device)
+                t = t.to(device)
+                c = c.to(device)
+                
+                noise = torch.randn_like(x)
+                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
+                total_loss.backward()
+                pbar.set_description(f"loss: {total_loss:.4f}")
+                optim.step()
+        
+            if ep % args.save_step == 0:
+                save_checkpoint(S_model, optim, ep, args.logdir)      
+                
+            if ep % args.sample_step == 0:
+                S_model.eval()
+                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)    
 
 def main(argv):
   
