@@ -25,7 +25,7 @@ def get_parser():
     parser.add_argument("--pre_caching", action='store_true', help='only precaching')
     parser.add_argument("--pre_caching_x0", action='store_true', help='only x0 precaching')
     
-    parser.add_argument("--x0_cache", action='store_false', help='using x0_cache')
+    parser.add_argument("--update_cache", action='store_true', help='using x0_cache')
     
     parser.add_argument("--inversion_loss", action='store_true', help='using inversion_loss')
     parser.add_argument("--distill_features", action='store_true', help='perform knowledge distillation using intermediate features')
@@ -209,58 +209,7 @@ def distillation_x0(args):
     # cache dataset
     
     # Dataset, DataLoader 설정
-    if args.x0_cache:
-        img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
-        label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
-        img_cache = torch.load(img_cache_path)
-        class_cache = torch.load(label_cache_path)
-        
-        cache_dataset = MNISTDataset_x0(img_cache, class_cache)        
-        
-        dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
-
-        # trainer 설정
-        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
-
-        
-        # training Loop
-        for ep in range(args.n_epoch):
-            print(f'epoch {ep}')
-            S_model.train()
-
-            # linear lrate decay
-            optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
-
-            pbar = tqdm(dataloader)
-            loss_ema = None
-            for x, c in pbar:
-                optim.zero_grad()
-                x = x.to(device)
-                c = c.to(device)
-                t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
-                x = (x * -1 + 1)
-                noise = torch.randn_like(x)
-                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
-                total_loss.backward()
-                pbar.set_description(f"loss: {total_loss:.4f}")
-                optim.step()
-        
-            if ep % args.save_step == 0:
-                save_checkpoint(S_model, optim, ep, args.logdir)      
-                
-            if ep % args.sample_step == 0:
-                S_model.eval()
-                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
-                
-            ## eval ##
-            if ep % args.eval_step == 0:
-                logging.basicConfig(filename='./logs/classifier_eval.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-                S_model.eval()
-
-                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, args.save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
-                logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
-                
-    else:
+    if args.update_cache:
         img_cache_path = f"./{args.cache_dir}/mnist_images.pt"
         t_cache_path = f"./{args.cache_dir}/mnist_t.pt"
         label_cache_path = f"./{args.cache_dir}/mnist_labels.pt"
@@ -313,6 +262,57 @@ def distillation_x0(args):
                 test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, args.save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
                 logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
 
+    else:
+        img_cache_path = f"./{args.cache_dir}/mnist_images_x0.pt"
+        label_cache_path = f"./{args.cache_dir}/mnist_labels_x0.pt"
+        img_cache = torch.load(img_cache_path)
+        class_cache = torch.load(label_cache_path)
+        
+        cache_dataset = MNISTDataset_x0(img_cache, class_cache)        
+        
+        dataloader = DataLoader(cache_dataset, batch_size=args.batch_size, shuffle=True)
+
+        # trainer 설정
+        trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
+
+        
+        # training Loop
+        for ep in range(args.n_epoch):
+            print(f'epoch {ep}')
+            S_model.train()
+
+            # linear lrate decay
+            optim.param_groups[0]['lr'] = args.lr*(1-ep/args.n_epoch)
+
+            pbar = tqdm(dataloader)
+            loss_ema = None
+            for x, c in pbar:
+                optim.zero_grad()
+                x = x.to(device)
+                c = c.to(device)
+                t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
+                x = (x * -1 + 1)
+                noise = torch.randn_like(x)
+                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
+                total_loss.backward()
+                pbar.set_description(f"loss: {total_loss:.4f}")
+                optim.step()
+        
+            if ep % args.save_step == 0:
+                save_checkpoint(S_model, optim, ep, args.logdir)      
+                
+            if ep % args.sample_step == 0:
+                S_model.eval()
+                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
+                
+            ## eval ##
+            if ep % args.eval_step == 0:
+                logging.basicConfig(filename='./logs/classifier_eval.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+                S_model.eval()
+
+                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, args.save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
+                logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
+                
 def main(argv):
   
     parser = get_parser()
