@@ -256,10 +256,13 @@ def distillation_x0(args):
                 
             ## eval ##
             if ep % args.eval_step == 0:
-                logging.basicConfig(filename='./logs/classifier_eval.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+                log_path = f"{args.savedir}/classifier_eval.log"
+                logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+                
                 S_model.eval()
 
-                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, args.save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
+                save_samples_dir = f"{args.save_dir}/output_samples"
+                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
                 logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
 
     else:
@@ -307,12 +310,15 @@ def distillation_x0(args):
                 
             ## eval ##
             if ep % args.eval_step == 0:
-                logging.basicConfig(filename='./logs/classifier_eval.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+                log_path = f"{args.savedir}/classifier_eval.log"
+                logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+                
                 S_model.eval()
 
-                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, args.save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
+                save_samples_dir = f"{args.save_dir}/output_samples"
+                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
                 logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
-                
+
 def main(argv):
   
     parser = get_parser()
