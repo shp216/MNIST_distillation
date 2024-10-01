@@ -173,7 +173,7 @@ class ContextUnet(nn.Module):
             nn.Conv2d(n_feat, self.in_channels, 3, 1, 1),
         )
 
-    def forward(self, x, c, t, context_mask):
+    def forward(self, x, c, t, context_mask, update_cemb1, update_cemb2):
         # x is (noisy) image, c is context label, t is timestep, 
         # context_mask says which samples to block the context on
         features = []
@@ -192,11 +192,19 @@ class ContextUnet(nn.Module):
         context_mask = (-1*(1-context_mask)) # need to flip 0 <-> 1
         c = c * context_mask
         
-        # embed context, time step
-        cemb1 = self.contextembed1(c).view(-1, self.n_feat * 2, 1, 1)
-        temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
-        cemb2 = self.contextembed2(c).view(-1, self.n_feat, 1, 1)
-        temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
+        if update_cemb1 is not None and update_cemb2 is not None:
+            # embed context, time step
+            cemb1 = update_cemb1
+            temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
+            cemb2 = update_cemb2
+            temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
+        
+        else:
+            # embed context, time step
+            cemb1 = self.contextembed1(c).view(-1, self.n_feat * 2, 1, 1)
+            temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
+            cemb2 = self.contextembed2(c).view(-1, self.n_feat, 1, 1)
+            temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
         cemb1.requires_grad_(True)
         cemb2.requires_grad_(True)
         # could concatenate the context embedding here instead of adaGN
@@ -256,7 +264,7 @@ class DDPM(nn.Module):
         self.drop_prob = drop_prob
         self.loss_mse = nn.MSELoss()
 
-    def forward(self, x, c, t, noise, context_mask):
+    def forward(self, x, c, t, noise, context_mask, update_cemb1, update_cemb2):
         """
         this method is used in training, so samples t and noise randomly
         """
@@ -272,7 +280,7 @@ class DDPM(nn.Module):
         # We should predict the "error term" from this x_t. Loss is what we return.
 
         # dropout context with some probability
-        output, features, cemb1, cemb2 = self.nn_model(x_t, c, _ts / self.n_T, context_mask)
+        output, features, cemb1, cemb2 = self.nn_model(x_t, c, _ts / self.n_T, context_mask, update_cemb1, update_cemb2)
         return output, features, cemb1, cemb2
         # return MSE between added noise, and our predicted noise
         #return self.loss_mse(noise, self.nn_model(x_t, c, _ts / self.n_T, context_mask))

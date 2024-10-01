@@ -72,13 +72,21 @@ class distillation_DDPM_trainer_x0(nn.Module):
         # S_cemb1.requires_grad_(True)
         # S_cemb2.requires_grad_(True)
         if self.inversion_loss:
-            T_optimize_loss = self.training_loss(T_output,noise)
-            S_optimize_loss = self.training_loss(S_output,noise)
+            # T_optimize_loss = self.training_loss(T_output,noise)
+            # S_optimize_loss = self.training_loss(S_output,noise)
             
-            T_grad_cemb1 = torch.autograd.grad(T_optimize_loss, T_cemb1, create_graph=True)[0].detach()
-            T_grad_cemb2 = torch.autograd.grad(T_optimize_loss, T_cemb2, create_graph=True)[0].detach()
-            S_grad_cemb1 = torch.autograd.grad(S_optimize_loss, S_cemb1, create_graph=True)[0]
-            S_grad_cemb2 = torch.autograd.grad(S_optimize_loss, S_cemb2, create_graph=True)[0]
+            T_optimize_loss = total_loss
+            S_optimize_loss = total_loss
+            
+
+            
+            # T_grad_cemb1 = torch.autograd.grad(T_optimize_loss, T_cemb1, create_graph=True)[0].detach()
+            # T_grad_cemb2 = torch.autograd.grad(T_optimize_loss, T_cemb2, create_graph=True)[0].detach()
+            # S_grad_cemb1 = torch.autograd.grad(S_optimize_loss, S_cemb1, create_graph=True)[0]
+            # S_grad_cemb2 = torch.autograd.grad(S_optimize_loss, S_cemb2, create_graph=True)[0]
+            
+            T_grad_cemb1, T_grad_cemb2 = torch.autograd.grad(T_optimize_loss, [T_cemb1, T_cemb2],create_graph=True)
+            S_grad_cemb1, S_grad_cemb2 = torch.autograd.grad(S_optimize_loss, [S_cemb1, S_cemb2], create_graph=True, retain_graph=True)
             
             grad_loss1 = self.training_loss(S_grad_cemb1, T_grad_cemb1)
             grad_loss2 = self.training_loss(S_grad_cemb2, T_grad_cemb2)
@@ -168,4 +176,7 @@ class distillation_DDPM_trainer(nn.Module):
             total_loss += inversion_loss_weight * (grad_loss1 + grad_loss2)
         
         return output_loss, total_loss
+    
+    
+    
                 

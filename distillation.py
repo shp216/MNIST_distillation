@@ -9,6 +9,8 @@ import time
 from PIL import Image
 import numpy as np
 from trainer import distillation_DDPM_trainer, distillation_DDPM_trainer_x0
+from cemb_trainer import Cemb_trainer, Cemb_trainer_x0
+from update_cemb import update_cemb
 from dataset import MNISTDataset, MNISTDataset_x0
 from torch.utils.data import Dataset, DataLoader
 from funcs import save_checkpoint, load_student_model, load_teacher_model, sample_images, load_pretrained_weights, show_images, visualize_t_cache_distribution
@@ -58,6 +60,8 @@ def get_parser():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for training")
     parser.add_argument("--feature_loss_weight", type=float, default=0.1, help="feature loss weighting")
     parser.add_argument("--inversion_loss_weight", type=float, default=0.1, help="inversion loss weighting")
+    parser.add_argument("--update_cemb_num", type=int, default=1, help="number of updating c_emb")
+
 
     # eval
     parser.add_argument("--eval_step", type=int, default=50, help='eval step')
@@ -223,7 +227,8 @@ def distillation_x0(args):
 
         # trainer 설정
         trainer = distillation_DDPM_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
-
+        cemb_trainer = Cemb_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
+        cemb_trainer_x0 = Cemb_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
         
         # training Loop
         for ep in range(args.n_epoch):
@@ -240,8 +245,8 @@ def distillation_x0(args):
                 x = x.to(device)
                 t = t.to(device)
                 c = c.to(device)
-                
                 noise = torch.randn_like(x)
+                
                 output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
                 total_loss.backward()
                 pbar.set_description(f"loss: {total_loss:.4f}")
@@ -277,6 +282,8 @@ def distillation_x0(args):
 
         # trainer 설정
         trainer = distillation_DDPM_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
+        cemb_trainer = Cemb_trainer(T_model, S_model, args.distill_features, args.inversion_loss)
+        cemb_trainer_x0 = Cemb_trainer_x0(T_model, S_model, args.distill_features, args.inversion_loss)
 
         
         # training Loop
@@ -296,28 +303,30 @@ def distillation_x0(args):
                 t = torch.randint(1, args.n_T+1, (x.shape[0],)).to(device)  # t ~ Uniform(0, n_T)
                 x = (x * -1 + 1)
                 noise = torch.randn_like(x)
-                output_loss, total_loss = trainer(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight)
+                
+                update_cemb1, update_cemb2 = update_cemb(cemb_trainer, x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight, args.update_cemb_num, args.lr)
+                output_loss, total_loss = cemb_trainer_x0(x,c,t,noise, args.feature_loss_weight, args.inversion_loss_weight, update_cemb1, update_cemb2)
                 total_loss.backward()
                 pbar.set_description(f"loss: {total_loss:.4f}")
                 optim.step()
         
-            if ep % args.save_step == 0:
-                save_checkpoint(S_model, optim, ep, args.logdir)      
+            # if ep % args.save_step == 0:
+            #     save_checkpoint(S_model, optim, ep, args.logdir)      
                 
-            if ep % args.sample_step == 0:
-                S_model.eval()
-                sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
+            # if ep % args.sample_step == 0:
+            #     S_model.eval()
+            #     sample_images(S_model, args.num_save_image, args.save_dir, ep, device)
                 
-            ## eval ##
-            if ep % args.eval_step == 0:
-                log_path = f"{args.savedir}/classifier_eval.log"
-                logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            # ## eval ##
+            # if ep % args.eval_step == 0:
+            #     log_path = f"{args.savedir}/classifier_eval.log"
+            #     logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
                 
-                S_model.eval()
+            #     S_model.eval()
 
-                save_samples_dir = f"{args.save_dir}/output_samples"
-                test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
-                logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
+            #     save_samples_dir = f"{args.save_dir}/output_samples"
+            #     test_accuracy, seen_accuracy, unseen_accuracy = sample_and_test_model(args.n_sample_per_class, args.w, save_samples_dir, model=S_model, unseen_class_index=args.unseen_class_index)
+            #     logging.info(f"Epoch {ep}: Total Accuracy: {test_accuracy}, Seen Accuracy: {seen_accuracy}, Unseen Accuracy: {unseen_accuracy}")
 
 def main(argv):
   
